@@ -1,7 +1,8 @@
 from PyQt5.QtWidgets import QWidget, QGroupBox, QLineEdit, QTextEdit, QLabel, QPushButton, QTableWidget, QComboBox, QTableWidgetItem
-from PyQt5.Qt import QGridLayout, QHBoxLayout, QMessageBox, Qt
+from PyQt5.Qt import QGridLayout, QHBoxLayout, QMessageBox, Qt, QColor, QTextCursor
 import os
 import json
+import re
 
 class Editor(QWidget):
     USER = 0
@@ -10,12 +11,14 @@ class Editor(QWidget):
     def __init__(self):
         super(Editor, self).__init__()
 
-        self.permissions = {}
-        self.objects = []
-        self.users = []
+        self.permissions = None # {}
+        self.objects = None # []
+        self.users = None # []
 
-        self.currentUser = ""
-        self.currentObjects = []
+        self.currentUser = None # ""
+        self.currentObjects = None # []
+
+        self.teTextLen = 0
 
         self.setWindowTitle('МБКС ЛР2 | Лазарев Михайлин')
         self.setMinimumWidth(500)
@@ -87,9 +90,11 @@ class Editor(QWidget):
 
         # ***************************************************************
 
+        self.teEditor.textChanged.connect(self.teTextChanged)
         self.btnOpen.clicked.connect(self.btnOpenFileClicked)
         self.btnSaveFile.clicked.connect(self.btnSaveFileClicked)
         self.cbUserSelect.currentTextChanged.connect(self.cbUserSelectIndexChanged)
+        self.lePermissionsFilePath.textChanged.connect(self.loadPermissions)
 
         self.loadPermissions()
 
@@ -103,6 +108,17 @@ class Editor(QWidget):
 
     def loadPermissions(self):
         self.twPermissions.clear()
+        self.twPermissions.setRowCount(0)
+        self.twPermissions.setColumnCount(0)
+
+        self.cbUserSelect.clear()
+
+        self.permissions = None
+        self.objects = None
+        self.users = None
+
+        self.currentUser = None
+        self.currentObjects = None
 
         try:
             with open(self.lePermissionsFilePath.text(), "r") as fs:
@@ -128,16 +144,56 @@ class Editor(QWidget):
                 self.cbUserSelect.clear()
                 self.cbUserSelect.addItems(self.users)
 
+                self.currentUser = self.cbUserSelect.currentText()
+                self.currentObjects = self.permissions['users'][self.currentUser]
+
+                self.cbUserSelectIndexChanged(self.currentUser)
+
         except:
             pass
 
     def cbUserSelectIndexChanged(self, user):
+        self.lblAvailable.setText("Доступно: ")
+
+        if self.cbUserSelect.count() == 0:
+            return
+
+        self.currentUser = user
+        self.currentObjects = self.permissions['users'][user]
+        self.teTextChanged()
         self.lblAvailable.setText("Доступно: " + self.permissions['users'][user])
 
     def teTextChanged(self):
-        pass
+        if (self.currentUser is None) or (self.currentObjects is None):
+            return
+
+        text = self.teEditor.toPlainText()
+
+        if len(text) < self.teTextLen:
+            self.teTextLen = len(text)
+            return
+
+        self.teEditor.textChanged.disconnect(self.teTextChanged)
+
+        self.teEditor.clear()
+
+        for letter in text:
+            if letter not in self.currentObjects:
+                self.teEditor.setTextColor(QColor('#FF0000'))
+            else:
+                self.teEditor.setTextColor(QColor('#000000'))
+
+            self.teEditor.insertPlainText(letter)
+
+        self.teTextLen = len(text)
+
+        self.teEditor.textChanged.connect(self.teTextChanged)
 
     def btnSaveFileClicked(self):
+        if (self.currentUser is None) or (self.currentObjects is None):
+            return
+
+        text = self.teEditor.toPlainText()
         fileName = self.leFileName.text()
 
         if len(fileName) <= 3:
@@ -145,23 +201,29 @@ class Editor(QWidget):
                                                                      'симоволов', QMessageBox.Ok)
             return
 
-        with open(os.path.join(self.leSharedFolderPath.text(), fileName), 'w') as fs:
-            fs.write(self.teEditor.toPlainText())
+        if re.search(r'[^' + str(self.currentObjects) + r']', text):
+            QMessageBox.warning(None, 'Некорректное содержимое файла', 'Текст содержит недоступные объекты',
+                                QMessageBox.Ok)
+            return
 
-        self.updateUserFilesList()
+        try:
+            with open(os.path.join(self.leSharedFolderPath.text(), fileName), 'w') as fs:
+                fs.write(text)
+        except:
+            QMessageBox.warning(None, 'Ошибка записи', 'Ошибка записи', QMessageBox.Ok)
+            return
+
+        QMessageBox.information(None, 'Сохранено', 'Сохранение выполнено успешно', QMessageBox.Ok)
 
     def btnOpenFileClicked(self):
-        pass
+        fileName = self.leFileName.text()
 
-    def keyPressEvent(self, event):
         try:
-            if event.key() == Qt.Key_Delete:
-                if self.focusWidget() == self.lwUserFolder:
-                    os.remove(os.path.join(self.leSharedFolderPath.text(), self.lwUserFolder.currentItem().text()))
-                    self.updateUserFilesList()
-
-                elif self.focusWidget() == self.lwSharedFolder:
-                    os.remove(os.path.join(self.lePermissionsFilePath.text(), self.lwSharedFolder.currentItem().text()))
-                    self.updateSharedFilesList()
+            with open(os.path.join(self.leSharedFolderPath.text(), fileName), 'r') as fs:
+                text = fs.read()
         except:
-            QMessageBox.warning(None, 'Ошибка', 'Ошибка удаления файла', QMessageBox.Ok)
+            QMessageBox.warning(None, 'Ошибка чтения', 'Ошибка чтения', QMessageBox.Ok)
+            return
+
+        self.teEditor.setText(text)
+        self.teTextChanged()
